@@ -1,4 +1,5 @@
 # Windows System Health & Diagnostic Scripts
+### by The IT Guy
 
 A collection of PowerShell scripts designed to monitor, diagnose, and report on various aspects of Windows system health. Each script generates a clean, easy-to-read HTML report saved directly to your desktop.
 
@@ -15,7 +16,7 @@ A collection of PowerShell scripts designed to monitor, diagnose, and report on 
 ## 🛠️ Requirements
 
 * **Operating System**: Windows 10 or Windows 11.
-* **Permissions**: All scripts must be run in **PowerShell as Administrator** to access system-level diagnostics like DISM, SFC, and CHKDSK.
+* **Permissions**: All scripts must be run in **PowerShell as Administrator**.
 * **Environment**: PowerShell 5.1 or higher.
 
 ## 📋 Usage
@@ -23,8 +24,10 @@ A collection of PowerShell scripts designed to monitor, diagnose, and report on 
 1. Download or clone this repository.
 2. Right-click on the script you wish to run (e.g., `PCHealthScan.ps1`).
 3. Select **Run with PowerShell**. 
-   * *Note: If prompted, ensure you are running as an Administrator.*
 4. Once the scan is complete, an HTML report will automatically open in your default browser and be saved to your **Desktop**.
 
-## ⚠️ Disclaimer
-These scripts are intended for diagnostic purposes. While they include standard Windows repair tools (like SFC and DISM), always ensure you have backups of important data before running system-level repairs.
+## ⚠️ Disclaimer & Safety
+These scripts perform deep system scans and repairs. While designed to be safe, any tool that modifies system files or disk structures carries a risk. Use at your own risk. The author and "The IT Guy" are not responsible for any data loss or system instability. **Always back up your data before running system repairs.**
+
+## ⚖️ License
+This project is licensed under the MIT License - see the LICENSE file for details.
