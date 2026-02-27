@@ -1,0 +1,98 @@
+# --- FULL AUDIT LOGIC (EXACT BATTERY REPORT MATCH) ---
+    function Invoke-FullAudit {
+        Write-Log "[!] STARTING COMPREHENSIVE SYSTEM AUDIT..."
+        $reportPath = "$env:USERPROFILE\Desktop\Full_System_Report.html"
+        
+        # This HTML head is identical to your BatteryHealth.ps1 styling
+        $htmlHead = @"
+<!DOCTYPE html>
+<html lang='en'>
+<head>
+    <meta charset='UTF-8'>
+    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #ffffff; /* Pure White */
+            margin: 20px;
+            color: #000000; /* Black text */
+        }
+        h1 {
+            color: #0056b3; /* Battery Report specific blue */
+            text-align: center;
+        }
+        .section-title {
+            color: #333;
+            font-size: 18px;
+            margin-top: 20px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        th, td {
+            padding: 10px;
+            border: 1px solid #ccc;
+            text-align: left;
+        }
+        th {
+            background-color: #0056b3; /* Matching Blue Header */
+            color: #fff;
+        }
+        pre {
+            background-color: #e9ecef;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+    </style>
+</head>
+<body>
+    <h1>Full System Health Report</h1>
+    <p style='text-align:center;'>Prepared by: The IT Guy (Jeff Lemons)</p>
+"@
+        $reportContent = ""
+
+        # Section 1: PC Health
+        Write-Log "[+] Collecting System Summary..."
+        $os = Get-WmiObject -Class Win32_OperatingSystem
+        $reportContent += "<h2 class='section-title'>Operating System Details</h2>"
+        $reportContent += "<table><tr><th>Detail</th><th>Value</th></tr>"
+        $reportContent += "<tr><td>OS Name</td><td>$($os.Caption)</td></tr>"
+        $reportContent += "<tr><td>Version</td><td>$($os.Version)</td></tr>"
+        $reportContent += "<tr><td>Free Memory</td><td>$([math]::Round($os.FreePhysicalMemory / 1MB, 2)) GB</td></tr>"
+        $reportContent += "</table>"
+
+        # Section 2: Hardware
+        Write-Log "[+] Checking Hardware Health..."
+        $reportContent += "<h2 class='section-title'>Storage Health</h2>"
+        $disks = Get-PhysicalDisk | Select-Object DeviceID, MediaType, HealthStatus
+        $reportContent += "<table><tr><th>Disk ID</th><th>Type</th><th>Health</th></tr>"
+        foreach ($d in $disks) { 
+            $reportContent += "<tr><td>$($d.DeviceID)</td><td>$($d.MediaType)</td><td>$($d.HealthStatus)</td></tr>" 
+        }
+        $reportContent += "</table>"
+
+        # Section 3: Software Audit
+        Write-Log "[+] Scanning Software Inventory..."
+        $reportContent += "<h2 class='section-title'>Installed Software Summary</h2>"
+        $reportContent += "<table><tr><th>Name</th><th>Version</th></tr>"
+        $software = Get-ItemProperty HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\* | Select-Object DisplayName, DisplayVersion | Select-Object -First 10
+        foreach ($s in $software) {
+            if ($s.DisplayName) { $reportContent += "<tr><td>$($s.DisplayName)</td><td>$($s.DisplayVersion)</td></tr>" }
+        }
+        $reportContent += "</table>"
+
+        # Combine and Save
+        $finalHtml = $htmlHead + "<div>" + $reportContent + "</div></body></html>"
+        $finalHtml | Out-File -Encoding UTF8 $reportPath
+        
+        Write-Log "[SUCCESS] Master Report saved to Desktop."
+        
+        if ([System.Windows.Forms.MessageBox]::Show("Master Scan Complete. View Full Report?", "The IT Guy", [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Information) -eq "Yes") {
+            Start-Process $reportPath
+        }
+    }
