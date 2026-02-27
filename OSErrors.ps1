@@ -1,14 +1,15 @@
 # Add Windows Forms .NET assembly
 Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
 
-# Function to generate HTML content
+# Function to generate HTML content with "The IT Guy" Documentation Styling
 function Generate-HTMLReport {
     param (
         [string]$htmlPath,
         [string]$content
     )
 
-    # HTML structure with white background and black text
+    # HTML structure matching your corporate documentation theme
     $htmlContent = @"
 <!DOCTYPE html>
 <html lang='en'>
@@ -19,18 +20,23 @@ function Generate-HTMLReport {
     <style>
         body {
             font-family: Arial, sans-serif;
-            background-color: #ffffff;
-            color: #000000;
+            background-color: #ffffff; /* Consistent White Background */
             margin: 20px;
+            color: #000000; /* Consistent Black Text */
         }
         h1 {
-            color: #0056b3;
+            color: #0056b3; /* The IT Guy Blue */
             text-align: center;
+            border-bottom: 2px solid #0056b3;
+            padding-bottom: 10px;
         }
         .section-title {
-            color: #333;
+            color: #333333;
             font-size: 18px;
-            margin-top: 20px;
+            margin-top: 25px;
+            font-weight: bold;
+            border-left: 5px solid #0056b3;
+            padding-left: 10px;
         }
         table {
             width: 100%;
@@ -39,20 +45,26 @@ function Generate-HTMLReport {
         }
         th, td {
             padding: 10px;
-            border: 1px solid #ccc;
+            border: 1px solid #cccccc;
             text-align: left;
         }
         th {
             background-color: #0056b3;
-            color: #fff;
+            color: #ffffff;
         }
         pre {
             background-color: #e9ecef;
-            padding: 10px;
+            padding: 15px;
             border-radius: 5px;
             overflow-x: auto;
             white-space: pre-wrap;
             word-wrap: break-word;
+            font-family: 'Consolas', monospace;
+            border: 1px solid #ccc;
+        }
+        p {
+            margin: 10px 0;
+            line-height: 1.5;
         }
     </style>
 </head>
@@ -69,82 +81,81 @@ function Generate-HTMLReport {
     $htmlContent | Out-File -Encoding UTF8 $htmlPath
 }
 
-# Function to check for disk errors using CHKDSK
+# --- Diagnostic Functions ---
+
 function Check-DiskErrors {
-    $diskReport = "<h2 class='section-title'>Disk Errors</h2>"
+    $diskReport = "<div class='section-title'>Disk Errors (CHKDSK)</div>"
     $drives = Get-WmiObject -Class Win32_LogicalDisk | Where-Object { $_.DriveType -eq 3 }
     foreach ($drive in $drives) {
         $driveLetter = $drive.DeviceID
         $diskReport += "<p>Running CHKDSK on drive $driveLetter...</p>"
-        $chkdskResult = cmd /c "chkdsk $driveLetter /scan"
+        $chkdskResult = cmd /c "chkdsk $driveLetter /scan" | Out-String
         $diskReport += "<pre>$chkdskResult</pre>"
     }
     return $diskReport
 }
 
-# Function to check for system file corruption using SFC
 function Run-SFC {
-    $sfcReport = "<h2 class='section-title'>System File Checker (SFC)</h2>"
-    $result = cmd /c "sfc /scannow"
+    $sfcReport = "<div class='section-title'>System File Checker (SFC)</div>"
+    $result = cmd /c "sfc /scannow" | Out-String
     $sfcReport += "<pre>$result</pre>"
-
-    if ($result -like "*Windows Resource Protection found corrupt files*") {
-        $sfcReport += "<p>SFC found and repaired corrupt system files.</p>"
-    } elseif ($result -like "*Windows Resource Protection did not find any integrity violations*") {
-        $sfcReport += "<p>No integrity violations found by SFC.</p>"
+    
+    if ($result -like "*found corrupt files*") {
+        $sfcReport += "<p style='color: #d9534f;'><strong>Note:</strong> SFC found and repaired corrupt system files.</p>"
     }
     return $sfcReport
 }
 
-# Function to check the health of the system image using DISM
-function Run-DISMCheck {
-    $dismReport = "<h2 class='section-title'>DISM Health Check</h2>"
-    $result = cmd /c "DISM /Online /Cleanup-Image /CheckHealth"
-    $dismReport += "<pre>$result</pre>"
-
-    if ($result -like "*The component store is repairable*") {
-        $dismReport += "<p>Component store corruption detected. Attempting repair...</p>"
-        $repairResult = cmd /c "DISM /Online /Cleanup-Image /RestoreHealth"
-        $dismReport += "<pre>$repairResult</pre>"
-    } elseif ($result -like "*No component store corruption detected*") {
-        $dismReport += "<p>No component store corruption detected.</p>"
-    }
-    return $dismReport
-}
-
-# Function to check event logs for critical system errors
 function Check-EventLogErrors {
-    $eventLogReport = "<h2 class='section-title'>Event Log Errors</h2>"
-    $criticalEvents = Get-WinEvent -LogName System -FilterHashtable @{Level=1; StartTime=(Get-Date).AddDays(-7)} -MaxEvents 20
-
-    if ($criticalEvents.Count -eq 0) {
-        $eventLogReport += "<p>No critical system errors found in the event logs.</p>"
-    } else {
-        $eventLogReport += "<table><tr><th>Error ID</th><th>Time</th><th>Message</th></tr>"
-        foreach ($event in $criticalEvents) {
-            $eventLogReport += "<tr><td>$($event.Id)</td><td>$($event.TimeCreated)</td><td>$($event.Message)</td></tr>"
+    $eventLogReport = "<div class='section-title'>Critical Event Logs (Last 7 Days)</div>"
+    try {
+        $criticalEvents = Get-WinEvent -LogName System -FilterHashtable @{Level=1; StartTime=(Get-Date).AddDays(-7)} -MaxEvents 20 -ErrorAction SilentlyContinue
+        
+        if ($null -eq $criticalEvents) {
+            $eventLogReport += "<p>No critical system errors found in the event logs.</p>"
+        } else {
+            $eventLogReport += "<table><tr><th>Error ID</th><th>Time</th><th>Message</th></tr>"
+            foreach ($event in $criticalEvents) {
+                $eventLogReport += "<tr><td>$($event.Id)</td><td>$($event.TimeCreated)</td><td>$($event.Message)</td></tr>"
+            }
+            $eventLogReport += "</table>"
         }
-        $eventLogReport += "</table>"
+    } catch {
+        $eventLogReport += "<p>Could not retrieve event logs.</p>"
     }
     return $eventLogReport
 }
 
-# Function to generate the full system health report
-function Generate-FullReport {
-    $fullReport = "<h2 class='section-title'>Operating System Health Check</h2>"
-    $fullReport += Check-DiskErrors
-    $fullReport += Run-SFC
-    $fullReport += Check-EventLogErrors
-    $fullReport += Run-DISMCheck
-    return $fullReport
+function Run-DISMCheck {
+    $dismReport = "<div class='section-title'>DISM Image Health Check</div>"
+    $result = cmd /c "DISM /Online /Cleanup-Image /CheckHealth" | Out-String
+    $dismReport += "<pre>$result</pre>"
+    return $dismReport
 }
 
-# Generate the HTML report
-$reportContent = Generate-FullReport
-$htmlPath = "$env:USERPROFILE\Desktop\OperatingSystemErrorCheckReport.html"
-Generate-HTMLReport -htmlPath $htmlPath -content $reportContent
+# --- Main Execution ---
 
-# Open the generated HTML report in the default web browser
-Start-Process $htmlPath
+Write-Host "Running OS Health Check... Please wait." -ForegroundColor Cyan
 
-Write-Host "Operating System Error Check Report has been generated and saved to your desktop."
+$fullContent = Check-DiskErrors
+$fullContent += Run-SFC
+$fullContent += Check-EventLogErrors
+$fullContent += Run-DISMCheck
+
+# Save the Report
+$htmlPath = "$env:USERPROFILE\Desktop\OSErrorCheckReport.html"
+Generate-HTMLReport -htmlPath $htmlPath -content $fullContent
+
+# Prompt User to View Report
+$title = "OS Scan Complete"
+$message = "The Operating System Health Check is finished. Would you like to view the report now?"
+$buttons = [System.Windows.Forms.MessageBoxButtons]::YesNo
+$icon = [System.Windows.Forms.MessageBoxIcon]::Information
+
+$result = [System.Windows.Forms.MessageBox]::Show($message, $title, $buttons, $icon)
+
+if ($result -eq [System.Windows.Forms.DialogResult]::Yes) {
+    Start-Process $htmlPath
+} else {
+    Write-Host "Report saved to Desktop as OSErrorCheckReport.html"
+}
