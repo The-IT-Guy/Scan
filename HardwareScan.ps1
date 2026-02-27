@@ -2,14 +2,14 @@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-# Function to generate HTML content
+# Function to generate HTML content with "The IT Guy" Styling
 function Generate-HTMLReport {
     param (
         [string]$htmlPath,
         [string]$content
     )
 
-    # HTML structure matching theme from other reports
+    # HTML structure matching your core branding (White background, Black text, Blue accents)
     $htmlContent = @"
 <!DOCTYPE html>
 <html lang='en'>
@@ -20,18 +20,23 @@ function Generate-HTMLReport {
     <style>
         body {
             font-family: Arial, sans-serif;
-            background-color: #f4f4f4;
+            background-color: #ffffff; /* Consistent White Background */
             margin: 20px;
-            color: #333;
+            color: #000000; /* Consistent Black Text */
         }
         h1 {
-            color: #0056b3;
+            color: #0056b3; /* The IT Guy Blue */
             text-align: center;
+            border-bottom: 2px solid #0056b3;
+            padding-bottom: 10px;
         }
         .section-title {
-            color: #333;
+            color: #333333;
             font-size: 18px;
-            margin-top: 20px;
+            margin-top: 25px;
+            font-weight: bold;
+            border-left: 5px solid #0056b3;
+            padding-left: 10px;
         }
         table {
             width: 100%;
@@ -40,20 +45,26 @@ function Generate-HTMLReport {
         }
         th, td {
             padding: 10px;
-            border: 1px solid #ccc;
+            border: 1px solid #cccccc;
             text-align: left;
         }
         th {
             background-color: #0056b3;
-            color: #fff;
+            color: #ffffff;
         }
         pre {
             background-color: #e9ecef;
-            padding: 10px;
+            padding: 15px;
             border-radius: 5px;
             overflow-x: auto;
             white-space: pre-wrap;
             word-wrap: break-word;
+            font-family: 'Consolas', monospace;
+            border: 1px solid #ccc;
+        }
+        .info-p {
+            margin: 5px 0;
+            font-size: 14px;
         }
     </style>
 </head>
@@ -74,8 +85,22 @@ function Generate-HTMLReport {
 function Run-HardwareScan {
     $reportContent = ""
 
+    # -------- System Information --------
+    $reportContent += "<div class='section-title'>System Information</div>"
+    $computerSystem = Get-WmiObject -Class Win32_ComputerSystem
+    $os = Get-WmiObject -Class Win32_OperatingSystem
+    $bios = Get-WmiObject -Class Win32_BIOS
+    
+    if ($computerSystem -and $os -and $bios) {
+        $reportContent += "<p class='info-p'><strong>Computer Name:</strong> $($computerSystem.Name)</p>"
+        $reportContent += "<p class='info-p'><strong>Manufacturer:</strong> $($computerSystem.Manufacturer)</p>"
+        $reportContent += "<p class='info-p'><strong>Model:</strong> $($computerSystem.Model)</p>"
+        $reportContent += "<p class='info-p'><strong>BIOS Version:</strong> $($bios.SMBIOSBIOSVersion)</p>"
+        $reportContent += "<p class='info-p'><strong>OS Name:</strong> $($os.Caption) ($($os.Version))</p>"
+    }
+
     # -------- Physical Disk Health --------
-    $reportContent += "<h2 class='section-title'>Physical Disk Health</h2>"
+    $reportContent += "<div class='section-title'>Physical Disk Health</div>"
     $disks = Get-PhysicalDisk | Select-Object DeviceID, MediaType, OperationalStatus, HealthStatus
     if ($disks) {
         $reportContent += "<table><tr><th>DeviceID</th><th>MediaType</th><th>OperationalStatus</th><th>HealthStatus</th></tr>"
@@ -83,62 +108,52 @@ function Run-HardwareScan {
             $reportContent += "<tr><td>$($disk.DeviceID)</td><td>$($disk.MediaType)</td><td>$($disk.OperationalStatus)</td><td>$($disk.HealthStatus)</td></tr>"
         }
         $reportContent += "</table>"
-    } else {
-        $reportContent += "<p>No physical disk data available.</p>"
     }
 
     # -------- Memory Status --------
-    $reportContent += "<h2 class='section-title'>Memory Status</h2>"
+    $reportContent += "<div class='section-title'>Memory Status</div>"
     $memoryInfo = Get-WmiObject -Class Win32_PhysicalMemory
     if ($memoryInfo) {
         $reportContent += "<table><tr><th>Device</th><th>Capacity (GB)</th><th>Speed (MHz)</th><th>Status</th></tr>"
         foreach ($mem in $memoryInfo) {
             $capacityGB = [math]::round($mem.Capacity / 1GB, 2)
-            $reportContent += "<tr><td>$($mem.DeviceLocator)</td><td>$capacityGB</td><td>$($mem.Speed)</td><td>$($mem.Status)</td></tr>"
+            $reportContent += "<tr><td>$($mem.DeviceLocator)</td><td>$capacityGB GB</td><td>$($mem.Speed) MHz</td><td>$($mem.Status)</td></tr>"
         }
         $reportContent += "</table>"
-    } else {
-        $reportContent += "<p>No memory information available.</p>"
-    }
-
-    # -------- System Information --------
-    $reportContent += "<h2 class='section-title'>System Information</h2>"
-    $computerSystem = Get-WmiObject -Class Win32_ComputerSystem
-    $os = Get-WmiObject -Class Win32_OperatingSystem
-    $bios = Get-WmiObject -Class Win32_BIOS
-    if ($computerSystem -and $os -and $bios) {
-        $reportContent += "<p>Computer Name: $($computerSystem.Name)</p>"
-        $reportContent += "<p>Manufacturer: $($computerSystem.Manufacturer)</p>"
-        $reportContent += "<p>Model: $($computerSystem.Model)</p>"
-        $reportContent += "<p>BIOS Version: $($bios.SMBIOSBIOSVersion)</p>"
-        $reportContent += "<p>OS Name: $($os.Caption) $($os.Version)</p>"
-    } else {
-        $reportContent += "<p>System information not available.</p>"
     }
 
     # -------- Disk Errors (CHKDSK) --------
-    $reportContent += "<h2 class='section-title'>Disk Errors (CHKDSK)</h2>"
+    $reportContent += "<div class='section-title'>Disk Errors (CHKDSK Scan)</div>"
     $drives = Get-WmiObject -Class Win32_LogicalDisk | Where-Object { $_.DriveType -eq 3 }
     if ($drives) {
         foreach ($drive in $drives) {
             $driveLetter = $drive.DeviceID
-            $reportContent += "<p>Running CHKDSK on drive $driveLetter...</p>"
-            $chkdskResult = cmd /c "chkdsk $driveLetter /scan"
+            $reportContent += "<p class='info-p'>Results for Drive $driveLetter :</p>"
+            $chkdskResult = cmd /c "chkdsk $driveLetter /scan" | Out-String
             $reportContent += "<pre>$chkdskResult</pre>"
         }
-    } else {
-        $reportContent += "<p>No drives found for CHKDSK.</p>"
     }
 
     return $reportContent
 }
 
-# Run the hardware scan and generate the HTML report
+# 1. Execute Scan
 $reportContent = Run-HardwareScan
+
+# 2. Save Report
 $htmlPath = "$env:USERPROFILE\Desktop\HardwareScanReport.html"
 Generate-HTMLReport -htmlPath $htmlPath -content $reportContent
 
-# Open the report in the default browser
-Start-Process $htmlPath
+# 3. Prompt User to View Report
+$title = "Scan Complete"
+$message = "Hardware Scan is finished. Would you like to view the HTML report now?"
+$buttons = [System.Windows.Forms.MessageBoxButtons]::YesNo
+$icon = [System.Windows.Forms.MessageBoxIcon]::Information
 
-Write-Host "Hardware Scan Report has been generated and saved to your desktop."
+$result = [System.Windows.Forms.MessageBox]::Show($message, $title, $buttons, $icon)
+
+if ($result -eq [System.Windows.Forms.DialogResult]::Yes) {
+    Start-Process $htmlPath
+} else {
+    Write-Host "Report saved to Desktop as HardwareScanReport.html"
+}
