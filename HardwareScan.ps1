@@ -9,34 +9,29 @@ function Generate-HTMLReport {
         [string]$content
     )
 
-    # HTML structure matching your core branding (White background, Black text, Blue accents)
+    # HTML structure matching theme with white background and black text, title removed
     $htmlContent = @"
 <!DOCTYPE html>
 <html lang='en'>
 <head>
     <meta charset='UTF-8'>
     <meta name='viewport' content='width=device-width, initial-scale=1.0'>
-    <title>Hardware Scan Report</title>
+    <title></title>
     <style>
         body {
             font-family: Arial, sans-serif;
-            background-color: #ffffff; /* Consistent White Background */
+            background-color: #ffffff; /* White background */
             margin: 20px;
-            color: #000000; /* Consistent Black Text */
+            color: #000000; /* Black text */
         }
         h1 {
-            color: #0056b3; /* The IT Guy Blue */
+            color: #0056b3;
             text-align: center;
-            border-bottom: 2px solid #0056b3;
-            padding-bottom: 10px;
         }
         .section-title {
-            color: #333333;
+            color: #333;
             font-size: 18px;
-            margin-top: 25px;
-            font-weight: bold;
-            border-left: 5px solid #0056b3;
-            padding-left: 10px;
+            margin-top: 20px;
         }
         table {
             width: 100%;
@@ -45,31 +40,24 @@ function Generate-HTMLReport {
         }
         th, td {
             padding: 10px;
-            border: 1px solid #cccccc;
+            border: 1px solid #ccc;
             text-align: left;
         }
         th {
             background-color: #0056b3;
-            color: #ffffff;
+            color: #fff;
         }
         pre {
             background-color: #e9ecef;
-            padding: 15px;
+            padding: 10px;
             border-radius: 5px;
             overflow-x: auto;
             white-space: pre-wrap;
             word-wrap: break-word;
-            font-family: 'Consolas', monospace;
-            border: 1px solid #ccc;
-        }
-        .info-p {
-            margin: 5px 0;
-            font-size: 14px;
         }
     </style>
 </head>
 <body>
-    <h1>Hardware Scan Report</h1>
     <div>
         $content
     </div>
@@ -157,3 +145,4 @@ if ($result -eq [System.Windows.Forms.DialogResult]::Yes) {
 } else {
     Write-Host "Report saved to Desktop as HardwareScanReport.html"
 }
+
