@@ -1,8 +1,7 @@
 # Add Windows Forms .NET assembly
 Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
 
-# Function to generate HTML content with "The IT Guy" Styling
+# Function to generate HTML content
 function Generate-HTMLReport {
     param (
         [string]$htmlPath,
@@ -67,8 +66,6 @@ function Generate-HTMLReport {
 
     # Write the HTML content to the specified file path
     $htmlContent | Out-File -Encoding UTF8 $htmlPath
-}
-
 # Function to run all the hardware system checks
 function Run-HardwareScan {
     $reportContent = ""
@@ -145,4 +142,5 @@ if ($result -eq [System.Windows.Forms.DialogResult]::Yes) {
 } else {
     Write-Host "Report saved to Desktop as HardwareScanReport.html"
 }
+
 
