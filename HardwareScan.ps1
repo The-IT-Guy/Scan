@@ -129,18 +129,9 @@ $reportContent = Run-HardwareScan
 $htmlPath = "$env:USERPROFILE\Desktop\HardwareScanReport.html"
 Generate-HTMLReport -htmlPath $htmlPath -content $reportContent
 
-# 3. Prompt User to View Report
-$title = "Scan Complete"
-$message = "Hardware Scan is finished. Would you like to view the HTML report now?"
-$buttons = [System.Windows.Forms.MessageBoxButtons]::YesNo
-$icon = [System.Windows.Forms.MessageBoxIcon]::Information
-
-$result = [System.Windows.Forms.MessageBox]::Show($message, $title, $buttons, $icon)
-
-if ($result -eq [System.Windows.Forms.DialogResult]::Yes) {
-    Start-Process $htmlPath
-} else {
-    Write-Host "Report saved to Desktop as HardwareScanReport.html"
+# Open the generated HTML report in the default web browser
+        Start-Process $htmlPath
 }
+
 
 
