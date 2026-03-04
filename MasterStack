@@ -1,0 +1,422 @@
+# MasterStack.ps1 - Complete PC Support Utility
+if ($PSScriptRoot) { Set-Location $PSScriptRoot }
+
+# ==========================================
+# --- 1. HTML REPORT ENGINE & HELPERS ---
+# ==========================================
+
+function Get-QuickUpdateStatus {
+    $RebootPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired"
+    if (Test-Path $RebootPath) { return "<span style='color:#FF9800; font-weight:bold;'>Needs Restart</span> (Updates pending)" }
+    try {
+        $lastFix = Get-CimInstance Win32_QuickFixEngineering | Where-Object InstalledOn -ne $null | Sort-Object InstalledOn -Descending | Select-Object -First 1
+        if ($lastFix) {
+            $installDate = [datetime]$lastFix.InstalledOn
+            $daysSince = ((Get-Date) - $installDate).Days
+            if ($daysSince -le 35) { return "<span style='color:#4CAF50; font-weight:bold;'>Up to Date</span> (Last patched: $($installDate.ToShortDateString()))" } 
+            else { return "<span style='color:#F44336; font-weight:bold;'>Needs Update</span> (Last patched: $($installDate.ToShortDateString()))" }
+        }
+    } catch { return "Status Unknown" }
+    return "Status Unknown"
+}
+
+function New-HtmlReport {
+    param([string]$Title, [string]$Content)
+    $CSS = @"
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #222222; color: #eeeeee; padding: 30px; margin: 0; }
+        .report-container { max-width: 900px; margin: 0 auto; background-color: #333333; padding: 40px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+        h1 { font-size: 24pt; font-weight: 300; margin-top: 0; color: #4fc3f7; border-bottom: 1px solid #555555; padding-bottom: 15px; }
+        h2 { font-size: 16pt; font-weight: 400; margin-top: 30px; color: #dddddd; border-bottom: 1px dashed #555; padding-bottom: 5px; }
+        table { border-collapse: collapse; width: 100%; margin-top: 15px; font-size: 11pt; }
+        th { text-align: left; font-weight: 600; color: #aaaaaa; padding: 10px; border-bottom: 2px solid #555555; background-color: #2a2a2a; }
+        td { padding: 10px; border-bottom: 1px solid #444444; }
+        tr:nth-child(even) { background-color: #2c2c2c; }
+        .log-box { font-family: 'Consolas', monospace; background-color: #111111; padding: 20px; border-radius: 5px; color: #4CAF50; line-height: 1.5; overflow-x: auto; margin-top:15px; }
+        .timestamp { color: #888888; font-size: 10pt; margin-bottom: 20px; }
+        .update-box { background-color: #2a2a2a; padding: 15px; border-left: 4px solid #4fc3f7; margin-top: 30px; }
+    </style>
+"@
+    $Date = Get-Date -Format "dddd, MMMM dd, yyyy 'at' hh:mm tt"
+    $UpdateStatus = Get-QuickUpdateStatus
+    $HTML = @"
+    <!DOCTYPE html><html><head><title>$Title</title>$CSS</head><body>
+        <div class="report-container">
+            <h1>$Title</h1><div class="timestamp">Report generated on $Date</div>
+            $Content
+            <div class="update-box"><h2 style="margin-top:0; border:none; padding:0;">Windows Update Status</h2><p style="margin-bottom:0; font-size:12pt;">$UpdateStatus</p></div>
+        </div>
+    </body></html>
+"@
+    $ReportName = $Title -replace '[^a-zA-Z0-9]', ''
+    $ReportPath = "$env:TEMP\${ReportName}.html"
+    $HTML | Out-File -FilePath $ReportPath -Encoding utf8 -Force
+    Invoke-Item $ReportPath
+}
+
+# ==========================================
+# --- 2. DEFINE THE TOOLS (FUNCTIONS) ---
+# ==========================================
+
+function Invoke-SysHealth {
+    Write-Host "Gathering System Health Data..." -ForegroundColor Green
+    $OS = Get-CimInstance Win32_OperatingSystem
+    $OSName = $OS.Caption -replace 'Microsoft ', ''
+    $Uptime = (Get-Date) - $OS.LastBootUpTime
+    $UptimeStr = "$($Uptime.Days) Days, $($Uptime.Hours) Hours, $($Uptime.Minutes) Minutes"
+    
+    $CPU = Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average | Select-Object -ExpandProperty Average
+    $RAMUsage = [math]::Round((($OS.TotalVisibleMemorySize - $OS.FreePhysicalMemory) / $OS.TotalVisibleMemorySize) * 100, 1)
+
+    $PerfHTML = "<h2>Live Performance & Uptime</h2><table><tr><th>Metric</th><th>Status</th></tr><tr><td>System Uptime</td><td>$UptimeStr</td></tr><tr><td>Current CPU Usage</td><td>$CPU%</td></tr><tr><td>Current RAM Usage</td><td>$RAMUsage%</td></tr></table>"
+
+    $SysDrive = $env:SystemDrive
+    $Disks = Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | Select-Object `
+        @{Name="Drive";Expression={ if ($_.DeviceID -eq $SysDrive) { "$($_.DeviceID) ($OSName)" } else { $_.DeviceID } }}, 
+        @{Name="Free Space (GB)";Expression={[math]::round($_.FreeSpace / 1GB,2)}},
+        @{Name="Total Size (GB)";Expression={[math]::round($_.Size / 1GB,2)}}
+    
+    $DiskHTML = "<h2>Storage Drives</h2>" + ($Disks | ConvertTo-Html -Fragment)
+    New-HtmlReport -Title "System Health Report" -Content ($PerfHTML + $DiskHTML)
+}
+
+function Invoke-NetworkReset {
+    Write-Host "Resetting Network Stack. Please wait..." -ForegroundColor Yellow
+    ipconfig /release | Out-Null; ipconfig /flushdns | Out-Null; ipconfig /renew | Out-Null; netsh winsock reset | Out-Null
+    Write-Host "Testing Internet Connectivity..." -ForegroundColor Cyan
+    $Ping = Test-Connection -ComputerName "8.8.8.8" -Count 2 -Quiet
+    $PingStatus = if ($Ping) { "<span style='color:#4CAF50;'>SUCCESS (Internet Connected)</span>" } else { "<span style='color:#F44336;'>FAILED (No Internet)</span>" }
+    $Log = "<div class='log-box'>> Releasing IP Address... SUCCESS<br>> Flushing DNS Cache... SUCCESS<br>> Renewing IP Address... SUCCESS<br>> Resetting Winsock Catalog... SUCCESS<br>> Pinging Google DNS (8.8.8.8)... $PingStatus</div>"
+    New-HtmlReport -Title "Network Reset Log" -Content $Log
+}
+
+function Invoke-Cleanup {
+    Write-Host "Cleaning Temp Files and Caches..." -ForegroundColor Yellow
+    $TempPath = $env:TEMP
+    Remove-Item "$TempPath\*" -Recurse -Force -ErrorAction SilentlyContinue
+    Clear-RecycleBin -Force -ErrorAction SilentlyContinue
+    Remove-Item "C:\ProgramData\Microsoft\Windows\WER\ReportArchive\*" -Recurse -Force -ErrorAction SilentlyContinue
+    $Log = "<div class='log-box'>> Emptying Recycle Bin... SUCCESS<br>> Removing User Temporary Files... SUCCESS<br>> Clearing Windows Error Reporting logs... SUCCESS<br>> System cleanup complete.</div>"
+    New-HtmlReport -Title "Cleanup Report" -Content $Log
+}
+
+function Invoke-RepairSystem {
+    Write-Host "`n--- REPAIRING WINDOWS SYSTEM ---" -ForegroundColor Yellow
+    Write-Host "1/3: Running Live CheckDisk (CHKDSK)..." -ForegroundColor White; chkdsk $env:SystemDrive /scan
+    Write-Host "2/3: Running DISM RestoreHealth..." -ForegroundColor White; Repair-WindowsImage -Online -RestoreHealth
+    Write-Host "3/3: Running SFC Scannow..." -ForegroundColor White; sfc /scannow
+    $Log = "<div class='log-box'>> CHKDSK /Scan ... COMPLETED<br>> DISM /RestoreHealth ... COMPLETED<br>> SFC /Scannow ... COMPLETED<br><br>File system and Windows Image checked and repaired.</div>"
+    New-HtmlReport -Title "Windows Repair Log" -Content $Log
+}
+
+function Invoke-HardwareInfo {
+    Write-Host "Gathering Extended Hardware Specs..." -ForegroundColor Cyan
+    $System = Get-CimInstance Win32_ComputerSystem; $BIOS = Get-CimInstance Win32_BIOS; $CPU = Get-CimInstance Win32_Processor
+    $Board = Get-CimInstance Win32_BaseBoard; $GPU = Get-CimInstance Win32_VideoController
+    $RAM = "$([math]::Round($System.TotalPhysicalMemory / 1GB, 2)) GB"
+    $GPUName = if ($GPU.Count -gt 1) { ($GPU.Name) -join ", " } else { $GPU.Name }
+    $TableHTML = "<table><tr><th>Component</th><th>Details</th></tr><tr><td><strong>Manufacturer</strong></td><td>$($System.Manufacturer)</td></tr><tr><td><strong>Model</strong></td><td>$($System.Model)</td></tr><tr><td><strong>Motherboard</strong></td><td>$($Board.Manufacturer) $($Board.Product)</td></tr><tr><td><strong>Serial Number</strong></td><td style='color:#4CAF50; font-weight:bold;'>$($BIOS.SerialNumber)</td></tr><tr><td><strong>Processor</strong></td><td>$($CPU.Name)</td></tr><tr><td><strong>Graphics (GPU)</strong></td><td>$GPUName</td></tr><tr><td><strong>Installed RAM</strong></td><td>$RAM</td></tr></table>"
+    New-HtmlReport -Title "Hardware Info" -Content $TableHTML
+}
+
+function Invoke-PrintFix {
+    Write-Host "Resetting Print Spooler..." -ForegroundColor Yellow
+    Stop-Service -Name Spooler -Force
+    Remove-Item -Path "$env:windir\System32\spool\PRINTERS\*.*" -Force -Recurse -ErrorAction SilentlyContinue
+    Start-Service -Name Spooler
+    $Printers = Get-CimInstance Win32_Printer | Select-Object Name, PortName, DriverName | ConvertTo-Html -Fragment
+    $Log = "<div class='log-box'>> Stopping Spooler... SUCCESS<br>> Clearing jobs... SUCCESS<br>> Restarting Spooler... SUCCESS</div><h2>Installed Printers Detected</h2>$Printers"
+    New-HtmlReport -Title "Print Spooler Reset" -Content $Log
+}
+
+function Invoke-BatteryReport {
+    Write-Host "Generating Battery Report..." -ForegroundColor Cyan
+    $ReportPath = "$env:USERPROFILE\Desktop\BatteryReport.html"
+    powercfg /batteryreport /output $ReportPath | Out-Null
+    Invoke-Item $ReportPath 
+}
+
+function Invoke-SecurityCheck {
+    Write-Host "Checking Security, Firewall & BitLocker..." -ForegroundColor Cyan
+    
+    # BitLocker Check
+    $BLHTML = "<h2>Drive Encryption (BitLocker)</h2>"
+    try {
+        $BL = Get-BitLockerVolume -MountPoint $env:SystemDrive -ErrorAction Stop
+        $BLStatus = if ($BL.VolumeStatus -eq 'FullyDecrypted') { "<span style='color:#F44336; font-weight:bold;'>Decrypted (Protection OFF)</span>" } else { "<span style='color:#4CAF50; font-weight:bold;'>$($BL.VolumeStatus)</span>" }
+        $BLHTML += "<table><tr><th>Drive</th><th>Encryption Status</th><th>Protection Method</th></tr><tr><td>$($BL.MountPoint)</td><td>$BLStatus</td><td>$($BL.EncryptionMethod)</td></tr></table>"
+    } catch {
+        $BLHTML += "<p style='color:#FF9800;'>BitLocker is not supported or not available on this Windows edition (Home).</p>"
+    }
+
+    # Firewall Status
+    $FWProfiles = Get-NetFirewallProfile | Select-Object Name, Enabled
+    $FWHTML = "<h2>Windows Firewall Status</h2><table><tr><th>Profile</th><th>Status</th></tr>"
+    foreach ($fw in $FWProfiles) {
+        $StatusText = if ($fw.Enabled -eq $true) { "<span style='color:#4CAF50; font-weight:bold;'>ON</span>" } else { "<span style='color:#F44336; font-weight:bold;'>OFF</span>" }
+        $FWHTML += "<tr><td>$($fw.Name)</td><td>$StatusText</td></tr>"
+    }
+    $FWHTML += "</table>"
+
+    # Antivirus Status
+    $AVProducts = Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct -ErrorAction SilentlyContinue
+    $AVHTML = "<h2>Antivirus Security</h2>"
+    if ($AVProducts) {
+        $AVHTML += "<table><tr><th>Antivirus Name</th><th>Protection Status</th><th>Signatures</th></tr>"
+        foreach ($av in $AVProducts) {
+            $State = $av.productState
+            $IsEnabled = ($State -band 0xF000) -eq 0x1000
+            $IsUpToDate = ($State -band 0x00F0) -eq 0
+            $StatusText = if ($IsEnabled) { "<span style='color:#4CAF50; font-weight:bold;'>Enabled</span>" } else { "<span style='color:#F44336; font-weight:bold;'>Disabled</span>" }
+            $UpdateText = if ($IsUpToDate) { "<span style='color:#4CAF50; font-weight:bold;'>Up to Date</span>" } else { "<span style='color:#FF9800; font-weight:bold;'>Outdated</span>" }
+            $AVHTML += "<tr><td>$($av.displayName)</td><td>$StatusText</td><td>$UpdateText</td></tr>"
+        }
+        $AVHTML += "</table>"
+    } else { $AVHTML += "<p style='color:#F44336;'>No Antivirus products registered in Windows Security Center.</p>" }
+    
+    New-HtmlReport -Title "Security Software Report" -Content ($BLHTML + $FWHTML + $AVHTML)
+}
+
+function Invoke-SoftwareUpdateCheck {
+    Write-Host "Scanning for outdated software using Winget... (This may take a minute)" -ForegroundColor Cyan
+    $env:WINGET_DISABLE_PROGRESS_BAR = 1 
+    try {
+        $upgradeData = winget upgrade --accept-source-agreements | Out-String
+        if ($upgradeData -match "No installed package found" -or $upgradeData -match "No applicable update") {
+            $HTML = "<h2>Software Updates</h2><p><span style='color:#4CAF50; font-weight:bold;'>All managed software is up to date!</span></p>"
+        } elseif ($upgradeData -match "Name") {
+            $cleanData = $upgradeData -replace "(?s).*?(Name\s+Id\s+Version)","`$1"
+            $HTML = "<h2>Available Software Updates</h2><pre class='log-box'>$cleanData</pre>"
+        } else { $HTML = "<h2>Software Updates</h2><pre class='log-box'>$upgradeData</pre>" }
+    } catch { $HTML = "<h2>Software Updates</h2><p style='color:#F44336;'>Windows Package Manager (Winget) is not installed.</p>" }
+    New-HtmlReport -Title "Outdated Software Check" -Content $HTML
+}
+
+function Invoke-StartupAnalyzer {
+    Write-Host "Analyzing Startup Programs..." -ForegroundColor Cyan
+    $StartupItems = @()
+    
+    # Collect from Registry HKLM
+    $HKLM = Get-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run" -ErrorAction SilentlyContinue
+    if ($HKLM) { foreach ($prop in $HKLM.psobject.properties | Where-Object { $_.Name -notin "PSPath","PSParentPath","PSChildName","PSDrive","PSProvider" }) { $StartupItems += [PSCustomObject]@{Source="Registry (All Users)"; Name=$prop.Name; Command=$prop.Value} } }
+    
+    # Collect from Registry HKCU
+    $HKCU = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -ErrorAction SilentlyContinue
+    if ($HKCU) { foreach ($prop in $HKCU.psobject.properties | Where-Object { $_.Name -notin "PSPath","PSParentPath","PSChildName","PSDrive","PSProvider" }) { $StartupItems += [PSCustomObject]@{Source="Registry (Current User)"; Name=$prop.Name; Command=$prop.Value} } }
+    
+    $HTML = "<h2>Startup Programs (Slow Boot Analyzer)</h2>"
+    if ($StartupItems.Count -gt 0) {
+        $HTML += "<table><tr><th>App Name</th><th>Command / Path</th><th>Source Location</th></tr>"
+        foreach ($item in $StartupItems) { $HTML += "<tr><td style='font-weight:bold;'>$($item.Name)</td><td>$($item.Command)</td><td>$($item.Source)</td></tr>" }
+        $HTML += "</table>"
+    } else { $HTML += "<p>No third-party startup apps detected in the standard registry locations.</p>" }
+    
+    New-HtmlReport -Title "Startup Analyzer" -Content $HTML
+}
+
+function Invoke-CrashDiagnostics {
+    Write-Host "Searching Event Logs for Recent System Crashes..." -ForegroundColor Cyan
+    # Get Critical (Level 1) or Error (Level 2) from System log in last 30 days
+    $Events = Get-WinEvent -FilterHashtable @{LogName='System'; Level=1,2; StartTime=(Get-Date).AddDays(-30)} -MaxEvents 15 -ErrorAction SilentlyContinue | Where-Object { $_.ProviderName -match "BugCheck|Kernel-Power|WER" }
+    
+    $HTML = "<h2>Crash Diagnostics (Last 30 Days)</h2>"
+    if ($Events) {
+        $HTML += "<table><tr><th>Date & Time</th><th>Event ID</th><th>Source</th><th>Description / Error Code</th></tr>"
+        foreach ($e in $Events) { $HTML += "<tr><td>$($e.TimeCreated)</td><td style='color:#F44336; font-weight:bold;'>$($e.Id)</td><td>$($e.ProviderName)</td><td>$($e.Message)</td></tr>" }
+        $HTML += "</table><p style='font-size:10pt; color:#888;'><em>Note: Kernel-Power Event 41 indicates an unexpected shutdown (power loss or hard freeze). BugCheck indicates a Blue Screen.</em></p>"
+    } else { $HTML += "<p><span style='color:#4CAF50; font-weight:bold;'>Excellent:</span> No critical crashes or Blue Screens detected in the System event log in the last 30 days.</p>" }
+    
+    New-HtmlReport -Title "Crash Diagnostics Log" -Content $HTML
+}
+
+function Invoke-SystemRestorePoint {
+    Write-Host "Creating System Restore Point..." -ForegroundColor Yellow
+    Write-Host "Please wait, this can take a minute..." -ForegroundColor White
+    
+    try {
+        Enable-ComputerRestore -Drive "$env:SystemDrive\" -ErrorAction SilentlyContinue
+        Checkpoint-Computer -Description "MasterStack Pre-Maintenance Backup" -RestorePointType "MODIFY_SETTINGS" -ErrorAction Stop
+        $Log = "<div class='log-box'>> Enabling System Restore on Drive C:... SUCCESS<br>> Creating Restore Point ('MasterStack Pre-Maintenance Backup')... SUCCESS<br><br><span style='color:#4CAF50;'>You now have a safe rollback point.</span></div>"
+    } catch {
+        $Log = "<div class='log-box' style='color:#F44336;'>> FAILED to create restore point.<br>> Error: $($_.Exception.Message)<br><br>System Restore might be disabled by Group Policy or space limits.</div>"
+    }
+    New-HtmlReport -Title "System Restore Point Creation" -Content $Log
+}
+
+function Invoke-WiFiExtractor {
+    Write-Host "Extracting Saved Wi-Fi Passwords..." -ForegroundColor Cyan
+    $Profiles = netsh wlan show profiles | Select-String -Pattern "All User Profile" | Foreach-Object { ($_.Line -split ": ")[1] }
+    
+    $HTML = "<h2>Saved Wi-Fi Profiles & Passwords</h2>"
+    if ($Profiles) {
+        $HTML += "<table><tr><th>Wi-Fi Network Name (SSID)</th><th>Saved Password (Cleartext)</th></tr>"
+        foreach ($prof in $Profiles) {
+            $Key = netsh wlan show profile name="$prof" key=clear | Select-String -Pattern "Key Content" | Foreach-Object { ($_.Line -split ": ")[1] }
+            if (-not $Key) { $Key = "<span style='color:#888;'>[Open Network / No Password]</span>" }
+            $HTML += "<tr><td style='font-weight:bold;'>$prof</td><td style='color:#4CAF50; font-family:Consolas, monospace;'>$Key</td></tr>"
+        }
+        $HTML += "</table>"
+    } else { $HTML += "<p style='color:#FF9800;'>No saved Wi-Fi networks found, or PC does not have a Wi-Fi adapter.</p>" }
+    
+    New-HtmlReport -Title "Wi-Fi Password Extractor" -Content $HTML
+}
+
+function Invoke-FullAuditReport {
+    Write-Host "Gathering Ultimate System Audit... Please wait." -ForegroundColor Cyan
+    
+    # 1. OS & Uptime
+    $OS = Get-CimInstance Win32_OperatingSystem
+    $OSName = $OS.Caption -replace 'Microsoft ', ''
+    $Uptime = (Get-Date) - $OS.LastBootUpTime
+    $UptimeStr = "$($Uptime.Days) Days, $($Uptime.Hours) Hours, $($Uptime.Minutes) Minutes"
+    $FullContent = "<h2>Operating System</h2><table><tr><th>Property</th><th>Value</th></tr><tr><td>OS Name</td><td>$OSName</td></tr><tr><td>Version</td><td>$($OS.Version)</td></tr><tr><td>Install Date</td><td>$($OS.InstallDate)</td></tr><tr><td>System Uptime</td><td>$UptimeStr</td></tr></table>"
+
+    # 2. Hardware
+    $System = Get-CimInstance Win32_ComputerSystem; $BIOS = Get-CimInstance Win32_BIOS; $CPU = Get-CimInstance Win32_Processor
+    $Board = Get-CimInstance Win32_BaseBoard; $GPU = Get-CimInstance Win32_VideoController
+    $RAM = "$([math]::Round($System.TotalPhysicalMemory / 1GB, 2)) GB"; $GPUName = if ($GPU.Count -gt 1) { ($GPU.Name) -join ", " } else { $GPU.Name }
+    $FullContent += "<h2>Hardware Specifications</h2><table><tr><th>Component</th><th>Details</th></tr><tr><td>Manufacturer</td><td>$($System.Manufacturer)</td></tr><tr><td>Model</td><td>$($System.Model)</td></tr><tr><td>Motherboard</td><td>$($Board.Manufacturer) $($Board.Product)</td></tr><tr><td>Serial Number</td><td style='color:#4CAF50; font-weight:bold;'>$($BIOS.SerialNumber)</td></tr><tr><td>Processor</td><td>$($CPU.Name)</td></tr><tr><td>Graphics (GPU)</td><td>$GPUName</td></tr><tr><td>Installed RAM</td><td>$RAM</td></tr></table>"
+
+    # 3. Storage
+    $SysDrive = $env:SystemDrive
+    $Disks = Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | Select-Object `
+        @{Name="Drive";Expression={ if ($_.DeviceID -eq $SysDrive) { "$($_.DeviceID) ($OSName)" } else { $_.DeviceID } }}, 
+        @{Name="Free Space (GB)";Expression={[math]::round($_.FreeSpace / 1GB,2)}},
+        @{Name="Total Size (GB)";Expression={[math]::round($_.Size / 1GB,2)}}
+    $FullContent += "<h2>Storage Health</h2>" + ($Disks | ConvertTo-Html -Fragment)
+
+    # 4. Battery Health
+    $FullContent += "<h2>Battery Health</h2>"
+    try {
+        $FullCap = @(Get-CimInstance -Namespace root\wmi -ClassName BatteryFullChargedCapacity -ErrorAction Stop); $DesignCap = @(Get-CimInstance -Namespace root\wmi -ClassName BatteryStaticData -ErrorAction Stop)
+        if ($FullCap.Count -gt 0 -and $DesignCap.Count -gt 0) {
+            $FullContent += "<table><tr><th>Battery</th><th>Design Capacity</th><th>Full Charge Capacity</th><th>Health Status</th></tr>"
+            for ($i=0; $i -lt $FullCap.Count; $i++) {
+                $fc = $FullCap[$i].FullChargedCapacity; $dc = $DesignCap[$i].DesignedCapacity
+                $health = [math]::Round(($fc / $dc) * 100, 1)
+                $color = if ($health -ge 80) { "#4CAF50" } elseif ($health -ge 50) { "#FF9800" } else { "#F44336" }
+                $FullContent += "<tr><td>Battery $($i+1)</td><td>$dc mWh</td><td>$fc mWh</td><td style='color:$color; font-weight:bold;'>$health%</td></tr>"
+            }
+            $FullContent += "</table>"
+        } else { $FullContent += "<p style='color:#888888;'>No battery detected.</p>" }
+    } catch { $FullContent += "<p style='color:#888888;'>No battery detected (Desktop PC).</p>" }
+
+    # 5. Network
+    $Network = Get-NetAdapter | Where-Object Status -eq 'Up' | Select-Object Name, InterfaceDescription, MacAddress
+    $FullContent += "<h2>Active Network Adapters</h2>" + ($Network | ConvertTo-Html -Fragment)
+
+    # 6. Crash Diagnostics
+    $Events = Get-WinEvent -FilterHashtable @{LogName='System'; Level=1,2; StartTime=(Get-Date).AddDays(-30)} -MaxEvents 5 -ErrorAction SilentlyContinue | Where-Object { $_.ProviderName -match "BugCheck|Kernel-Power|WER" }
+    $FullContent += "<h2>Recent System Crashes (Last 30 Days)</h2>"
+    if ($Events) {
+        $FullContent += "<table><tr><th>Date & Time</th><th>Event ID</th><th>Source</th></tr>"
+        foreach ($e in $Events) { $FullContent += "<tr><td>$($e.TimeCreated)</td><td style='color:#F44336; font-weight:bold;'>$($e.Id)</td><td>$($e.ProviderName)</td></tr>" }
+        $FullContent += "</table>"
+    } else { $FullContent += "<p><span style='color:#4CAF50; font-weight:bold;'>Excellent:</span> No critical crashes or Blue Screens detected recently.</p>" }
+
+    # 7. Startup Analyzer
+    $StartupItems = @()
+    $HKLM = Get-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run" -ErrorAction SilentlyContinue
+    if ($HKLM) { foreach ($prop in $HKLM.psobject.properties | Where-Object { $_.Name -notin "PSPath","PSParentPath","PSChildName","PSDrive","PSProvider" }) { $StartupItems += [PSCustomObject]@{Source="Registry (All Users)"; Name=$prop.Name; Command=$prop.Value} } }
+    $HKCU = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -ErrorAction SilentlyContinue
+    if ($HKCU) { foreach ($prop in $HKCU.psobject.properties | Where-Object { $_.Name -notin "PSPath","PSParentPath","PSChildName","PSDrive","PSProvider" }) { $StartupItems += [PSCustomObject]@{Source="Registry (Current User)"; Name=$prop.Name; Command=$prop.Value} } }
+    $FullContent += "<h2>Startup Programs (Slow Boot Analyzer)</h2>"
+    if ($StartupItems.Count -gt 0) {
+        $FullContent += "<table><tr><th>App Name</th><th>Command / Path</th></tr>"
+        foreach ($item in $StartupItems) { $FullContent += "<tr><td style='font-weight:bold;'>$($item.Name)</td><td>$($item.Command)</td></tr>" }
+        $FullContent += "</table>"
+    } else { $FullContent += "<p>No third-party startup apps detected.</p>" }
+
+    # 8. Security & BitLocker
+    $FullContent += "<h2>Security & Encryption</h2>"
+    try {
+        $BL = Get-BitLockerVolume -MountPoint $env:SystemDrive -ErrorAction Stop
+        $BLStatus = if ($BL.VolumeStatus -eq 'FullyDecrypted') { "<span style='color:#F44336; font-weight:bold;'>Decrypted (Protection OFF)</span>" } else { "<span style='color:#4CAF50; font-weight:bold;'>$($BL.VolumeStatus)</span>" }
+        $FullContent += "<table><tr><th>BitLocker Drive</th><th>Encryption Status</th><th>Method</th></tr><tr><td>$($BL.MountPoint)</td><td>$BLStatus</td><td>$($BL.EncryptionMethod)</td></tr></table><br>"
+    } catch { $FullContent += "<p style='color:#FF9800;'>BitLocker is not supported on this Windows edition.</p>" }
+    
+    $AVProducts = Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct -ErrorAction SilentlyContinue
+    if ($AVProducts) {
+        $FullContent += "<table><tr><th>Antivirus Name</th><th>Protection Status</th><th>Signatures</th></tr>"
+        foreach ($av in $AVProducts) {
+            $State = $av.productState; $IsEnabled = ($State -band 0xF000) -eq 0x1000; $IsUpToDate = ($State -band 0x00F0) -eq 0
+            $StatusText = if ($IsEnabled) { "<span style='color:#4CAF50; font-weight:bold;'>Enabled</span>" } else { "<span style='color:#F44336; font-weight:bold;'>Disabled</span>" }
+            $UpdateText = if ($IsUpToDate) { "<span style='color:#4CAF50; font-weight:bold;'>Up to Date</span>" } else { "<span style='color:#FF9800; font-weight:bold;'>Outdated</span>" }
+            $FullContent += "<tr><td>$($av.displayName)</td><td>$StatusText</td><td>$UpdateText</td></tr>"
+        }
+        $FullContent += "</table>"
+    } else { $FullContent += "<p style='color:#F44336;'>No Antivirus products registered in Windows Security Center.</p>" }
+
+    # 9. Software Updates
+    $env:WINGET_DISABLE_PROGRESS_BAR = 1 
+    $upgradeData = winget upgrade --accept-source-agreements | Out-String
+    if ($upgradeData -match "No installed package found" -or $upgradeData -match "No applicable update") {
+        $FullContent += "<h2>Software Updates</h2><p><span style='color:#4CAF50; font-weight:bold;'>All managed software is up to date!</span></p>"
+    } elseif ($upgradeData -match "Name") {
+        $cleanData = $upgradeData -replace "(?s).*?(Name\s+Id\s+Version)","`$1"
+        $FullContent += "<h2>Available Software Updates</h2><pre class='log-box'>$cleanData</pre>"
+    } else { $FullContent += "<h2>Software Updates</h2><pre class='log-box'>$upgradeData</pre>" }
+
+    New-HtmlReport -Title "Ultimate System Audit Report" -Content $FullContent
+}
+
+# ==========================================
+# --- 3. DEFINE THE MENU INTERFACE ---
+# ==========================================
+
+function Show-Menu {
+    Clear-Host
+    Write-Host "==================================" -ForegroundColor Cyan
+    Write-Host "     PC SUPPORT MASTER STACK      " -ForegroundColor White
+    Write-Host "==================================" -ForegroundColor Cyan
+    Write-Host " [ DIAGNOSTICS & AUDITS ]" -ForegroundColor DarkGray
+    Write-Host "  1. System Health Check"
+    Write-Host "  2. Run Ultimate System Audit"
+    Write-Host "  3. Crash Diagnostics (Blue Screens)"
+    Write-Host "  4. Startup Programs Analyzer"
+    Write-Host "  5. Hardware & Serial Number"
+    Write-Host "  6. Generate Native Battery Report"
+    Write-Host "  7. Extract Wi-Fi Passwords"
+    Write-Host ""
+    Write-Host " [ MAINTENANCE & REPAIR ]" -ForegroundColor DarkGray
+    Write-Host "  8. Create System Restore Point (Backup)"
+    Write-Host "  9. Repair Windows (CHKDSK/DISM/SFC)"
+    Write-Host " 10. Cleanup Temp Files & Caches"
+    Write-Host " 11. Network Troubleshoot & Reset"
+    Write-Host " 12. Fix Printing & Spooler Issues"
+    Write-Host ""
+    Write-Host " [ SECURITY & UPDATES ]" -ForegroundColor DarkGray
+    Write-Host " 13. Check Security, AV & BitLocker"
+    Write-Host " 14. Check Outdated Software"
+    Write-Host ""
+    Write-Host " 15. Exit Utility"
+    Write-Host "==================================" -ForegroundColor Cyan
+}
+
+# ==========================================
+# --- 4. THE EXECUTION LOOP ---
+# ==========================================
+
+do {
+    Show-Menu
+    $choice = Read-Host "Select an option (1-15)"
+    
+    switch ($choice) {
+        '1' { Invoke-SysHealth }
+        '2' { Invoke-FullAuditReport }
+        '3' { Invoke-CrashDiagnostics }
+        '4' { Invoke-StartupAnalyzer }
+        '5' { Invoke-HardwareInfo }
+        '6' { Invoke-BatteryReport }
+        '7' { Invoke-WiFiExtractor }
+        '8' { Invoke-SystemRestorePoint }
+        '9' { Invoke-RepairSystem }
+        '10' { Invoke-Cleanup }
+        '11' { Invoke-NetworkReset }
+        '12' { Invoke-PrintFix }
+        '13' { Invoke-SecurityCheck }
+        '14' { Invoke-SoftwareUpdateCheck }
+        '15' { Write-Host "Exiting..." -ForegroundColor Yellow }
+        Default { Write-Host "Invalid choice, try again." -ForegroundColor Red; Start-Sleep -Seconds 1 }
+    }
+} while ($choice -ne '15')
